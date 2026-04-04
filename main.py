@@ -4,9 +4,11 @@ from logic.game_engine import GameEngine
 from ui.login_view import LoginView
 from ui.lobby_view import LobbyView
 from ui.game_view import GameView
+from database import Database
 
 class HideAndSeekApp(App):
     def build(self):
+        self.db=Database()
         self.engine = GameEngine()
         self.player_nick = ""
         self.is_host = False
