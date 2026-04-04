@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Hide & Seek GPS - Pro</title>
+    <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
+    <style>
+        body { font-family: sans-serif; background: #121212; color: white; text-align: center; padding: 20px; }
+        .card { background: #1e1e1e; padding: 20px; border-radius: 15px; box-shadow: 0 4px 10px rgba(0,0,0,0.5); max-width: 400px; margin: auto; }
+        input { width: 80%; padding: 12px; margin: 10px 0; border-radius: 5px; border: none; background: #333; color: white; }
+        button { width: 85%; padding: 15px; margin: 10px 0; border-radius: 5px; border: none; cursor: pointer; font-weight: bold; transition: 0.3s; }
+        .btn-join { background: #2196F3; color: white; }
+        .btn-ready { background: #4CAF50; color: white; }
+        .btn-lock { background: #FF9800; color: white; }
+        .btn-leave { background: #f44336; color: white; }
+        button:disabled { background: #555 ! obscurity; cursor: not-allowed; }
+        #radar { margin-top: 20px; font-size: 1.1rem; white-space: pre-wrap; line-height: 1.6; border-top: 1px solid #333; padding-top: 10px; }
+        .status-dot { height: 10px; width: 10px; border-radius: 50%; display: inline-block; margin-right: 5px; }
+    </style>
+</head>
+<body>
+    <div id="login-screen" class="card">
+        <h2>HIDE & SEEK GPS</h2>
+        <input type="text" id="nick" placeholder="Twój Nick">
+        <input type="text" id="room" placeholder="Kod Pokoju">
+        <button class="btn-join" onclick="connect()">DOŁĄCZ DO GRY</button>
+    </div>
+
+    <div id="game-screen" class="card" style="display:none;">
+        <div style="display: flex; justify-content: space-between; font-size: 0.8rem; margin-bottom: 10px;">
+            <span><span id="dot" class="status-dot" style="background: gray;"></span>GPS: <span id="accuracy">?</span>m</span>
+            <span id="player-count">Graczy: 0</span>
+        </div>
+        <h3 id="room-display">POKÓJ: ---</h3>
+        <button id="action-btn" class="btn-ready" onclick="handleAction()">GOTOWY</button>
+        <button class="btn-leave" onclick="leave()">OPUŚĆ POKÓJ</button>
+        <div id="radar">Inicjalizacja GPS...</div>
+    </div>
+
+    <script>
+        const SERVER_URL = window.location.origin;
+        let myNick = "", myRoom = "", myRole = "viewer", isLocked = false;
+        let myPos = { lat: 0, lon: 0 };
+
+        // KONFIGURACJA GPS DLA MAKSYMALNEJ DOKŁADNOŚCI
+        if ("geolocation" in navigator) {
+            navigator.geolocation.watchPosition(pos => {
+                // Jeśli dokładność jest gorsza niż 30m, informujemy użytkownika, ale aktualizujemy dane
+                const acc = Math.round(pos.coords.accuracy);
+                document.getElementById('accuracy').innerText = acc;
+                
+                myPos.lat = pos.coords.latitude;
+                myPos.lon = pos.coords.longitude;
+                
+                document.getElementById('dot').style.background = acc < 15 ? "#4CAF50" : "#FF9800";
+                if(document.getElementById('radar').innerText === "Inicjalizacja GPS...") {
+                    document.getElementById('radar').innerText = "Oczekiwanie na start...";
+                }
+            }, err => {
+                let msg = "BŁĄD GPS: ";
+                switch(err.code) {
+                    case 1: msg += "Brak zgody/HTTPS"; break;
+                    case 2: msg += "Brak sygnału (wyjdź na zewnątrz)"; break;
+                    case 3: msg += "Timeout"; break;
+                }
+                document.getElementById('radar').innerText = msg;
+                document.getElementById('dot').style.background = "red";
+            }, { 
+                enableHighAccuracy: true, 
+                timeout: 10000, 
+                maximumAge: 0 
+            });
+        }
+
+        async function connect() {
+            myNick = document.getElementById('nick').value.trim();
+            myRoom = document.getElementById('room').value.trim();
+            if(!myNick || !myRoom) return alert("Wpisz dane!");
+            try {
+                await axios.post(`${SERVER_URL}/join`, { room_code: myRoom, nick: myNick });
+                document.getElementById('login-screen').style.display = 'none';
+                document.getElementById('game-screen').style.display = 'block';
+                document.getElementById('room-display').innerText = "POKÓJ: " + myRoom;
+                setInterval(gameTick, 1000);
+            } catch (e) { alert("Błąd połączenia z serwerem!"); }
+        }
+
+        async function handleAction() {
+            const btn = document.getElementById('action-btn');
+            if (btn.innerText === "GOTOWY") {
+                await axios.post(`${SERVER_URL}/ready`, { room_code: myRoom, nick: myNick });
+                btn.disabled = true; btn.innerText = "CZEKAM...";
+            } else if (btn.innerText === "ZAPISZ POZYCJĘ") {
+                await axios.post(`${SERVER_URL}/lock_position`, { room_code: myRoom, nick: myNick });
+                isLocked = true; btn.disabled = true; btn.innerText = "ZAMROŻONO";
+            }
+        }
+
+        async function gameTick() {
+            try {
+                const res = await axios.post(`${SERVER_URL}/update`, { room_code: myRoom, nick: myNick, lat: myPos.lat, lon: myPos.lon });
+                const data = res.data;
+                const me = data.players[myNick];
+                document.getElementById('player-count').innerText = "Graczy: " + Object.keys(data.players).length;
+
+                if (data.status === "lobby") {
+                    myRole = "viewer"; isLocked = false;
+                    const btn = document.getElementById('action-btn');
+                    btn.disabled = false; btn.className = "btn-ready"; btn.innerText = "GOTOWY";
+                } else {
+                    myRole = me.role;
+                    updateUI(data, me);
+                }
+            } catch (e) { console.error("Tick error:", e); }
+        }
+
+        function updateUI(data, me) {
+            const btn = document.getElementById('action-btn');
+            const radar = document.getElementById('radar');
+            if (myRole === "hider") {
+                if (!isLocked) {
+                    btn.disabled = false; btn.className = "btn-lock"; btn.innerText = "ZAPISZ POZYCJĘ";
+                }
+                radar.innerText = me.found ? "ZŁAPANY! ❌" : "JESTEŚ UKRYTY 🛡️\nZostań w miejscu!";
+            } else {
+                btn.innerText = "SZUKASZ!"; btn.disabled = true;
+                let text = "--- RADAR ---\n";
+                for (let name in data.players) {
+                    if (name === myNick) continue;
+                    let p = data.players[name];
+                    if (p.found) text += `${name}: ZŁAPANY ✅\n`;
+                    else if (p.pos_locked) {
+                        const dist = calcDist(myPos.lat, myPos.lon, p.lat, p.lon);
+                        // Zwiększona strefa złapania do 7m dla kompensacji błędu GPS
+                        const hint = dist < 8 ? "OGIEŃ! 🔥" : dist < 25 ? "Ciepło" : "Zimno";
+                        text += `${name}: ${hint} (${Math.round(dist)}m)\n`;
+                        if (dist < 7) axios.post(`${SERVER_URL}/mark_found`, { room_code: myRoom, nick: name });
+                    } else text += `${name}: Szuka kryjówki...\n`;
+                }
+                radar.innerText = text;
+            }
+        }
+
+        function calcDist(lat1, lon1, lat2, lon2) {
+            const R = 6371000;
+            const dLat = (lat2 - lat1) * Math.PI / 180;
+            const dLon = (lon2 - lon1) * Math.PI / 180;
+            const a = Math.sin(dLat/2)**2 + Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.sin(dLon/2)**2;
+            return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+        }
+
+        async function leave() {
+            try { await axios.post(`${SERVER_URL}/leave`, { room_code: myRoom, nick: myNick }); } finally { location.reload(); }
+        }
+    </script>
+</body>
+</html>
