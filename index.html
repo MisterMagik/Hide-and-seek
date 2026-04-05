@@ -133,9 +133,9 @@
                     else if (p.pos_locked) {
                         const dist = calcDist(myPos.lat, myPos.lon, p.lat, p.lon);
                         // Zwiększona strefa złapania do 7m dla kompensacji błędu GPS
-                        const hint = dist < 8 ? "OGIEŃ! 🔥" : dist < 25 ? "Ciepło" : "Zimno";
-                        text += `${name}: ${hint} (${Math.round(dist)}m)\n`;
-                        if (dist < 7) axios.post(`${SERVER_URL}/mark_found`, { room_code: myRoom, nick: name });
+                        const hint = dist < 100 ? "OGIEŃ! 🔥" : dist < 300 ? "Ciepło" : "Zimno";
+                        text += `${name}: ${hint}\n`;
+                        if (dist < 20) axios.post(`${SERVER_URL}/mark_found`, { room_code: myRoom, nick: name });
                     } else text += `${name}: Szuka kryjówki...\n`;
                 }
                 radar.innerText = text;
